@@ -1,102 +1,95 @@
-#include <string.h>
 #include <stdio.h>
-#include <unistd.h>
-#include <fcntl.h> 		// descripteurs de fichiers ( open()...)
-#include <termios.h>	// 
-#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>//Pour interagir avec le port série
+#include <fcntl.h> //Descripteurs de fichiers
+#include <termios.h> //Contrôle des ports de communication asynchrone
+#include <errno.h>//Gestion des erreurs
+#include <mariadb/mysql.h>
 #include <iostream>
+using namespace std;
 
-/* baudrate settings are defined in <asm/termbits.h>, which is included by <termios.h> */
-#define BAUDRATE B115200            
-/* change this definition for the correct port */
-#define MODEMDEVICE "/dev/ttyS0"
-#define _POSIX_SOURCE 1 /* POSIX compliant source */
+#define PORTSERIE "/dev/ttyS0"//Défini la constante sur le chemin sur lequel la carte est branchée
+#define BAUDRATE 115200
 
-#define FALSE 0
-#define TRUE 1
 
-volatile int STOP=FALSE; 
-int main()
-{
-  	int sfd, c, res;
-    struct termios newtio;
+int main(){
+
+    int sfd, c, res;
     char buf[255];
-    ssize_t size;
-	
-	sfd = open(MODEMDEVICE, O_RDONLY | O_NOCTTY ); 
-	if (sfd == -1)
-	{
-	  printf ("Error  no is : %d\n", errno);
-	  printf("Error description is : %s\n",strerror(errno));
-	  return(-1);
-	}
-    bzero(&newtio, sizeof(newtio)); /* clear struct for new port settings */
- /* 
-          BAUDRATE: Set bps rate. You could also use cfsetispeed and cfsetospeed.
-          CRTSCTS : output hardware flow control (only used if the cable has
-                    all necessary lines. See sect. 7 of Serial-HOWTO)
-          CS8     : 8n1 (8bit,no parity,1 stopbit)
-          CLOCAL  : local connection, no modem contol
-          CREAD   : enable receiving characters
-        */
-    newtio.c_cflag = BAUDRATE | CRTSCTS | CS8 | CLOCAL | CREAD;
-         
-        /*
-          IGNPAR  : ignore bytes with parity errors
-          ICRNL   : map CR to NL (otherwise a CR input on the other computer
-                    will not terminate input)
-          otherwise make device raw (no other input processing)
-        */
-    newtio.c_iflag = IGNPAR | ICRNL;
-         
-       /*
-          ICANON  : enable canonical input
-          disable all echo functionality, and don't send signals to calling program
-        */
-    newtio.c_lflag = ICANON;
-         
+    string temperature;
+    string humidity;
+    string pression;
+    string requeteMySQL = "INSERT INTO mesure (pression,temperature,humidite) VALUES ('";
+    char requete[1024];
 
-	/* 
-	  now clean the modem line and activate the settings for the port
-	*/
-	 tcflush(sfd, TCIFLUSH);
-	 tcsetattr(sfd,TCSANOW,&newtio);
-	
-	for (int i =0 ; i<50 ; i++)
-	{
-		
-	/*
-	  ** On lit :
-	  ** on passe a read :
-	  ** - le fd,
-	  ** - le buffer
-	  ** - la taille du buffer
-	  ** Attention si tu passe une taille de buffer plus grande que la taille de ton buffer,
-	  ** ton programme deviens sensible aux Buffer Overflow
-	  */
-	  size = read (sfd, buf, 127);
-   
-	  /*
-	  ** On raoute un '\0' à la fin de la chaine lut, pour être sur d'avoir une chaine de caractères valide.
-	  ** size correspondant a l'index du dernier caractere du buffer + 1.
-	  ** Ceci est utile si tu veux utiliser ta chaine dans une fonction comme strcmp() ou printf()
-	  */
- 
-	  buf[size] = 0;
-   
-	  /*
-	  ** On affiche ce que l'on viens de lire dans la console :
-	  ** NOTE :
-	  ** il existe des FD speciaux :
-	  ** Le fd 1 est la sortie standart ( console )
-	  */
- 
-	  //write (1, buf, size);
-	  std::cout << i << " " << buf << "\n";
-	  }
- 
-  /* Ne pas oublier de libérer ton file descriptor */
-  close(sfd);
- 
-  return 0;
+    struct termios newtio;
+    bzero(&newtio, sizeof(newtio));
+    newtio.c_cflag = B115200 | CRTSCTS | CS8 | CLOCAL | CREAD;
+    newtio.c_iflag = IGNPAR | ICRNL;
+    newtio.c_lflag = ICANON;
+    sfd = open(PORTSERIE, O_RDONLY | O_NOCTTY);//Ouvre le port série en lecture seule
+    tcflush(sfd, TCIFLUSH);
+    tcsetattr(sfd,TCSANOW,&newtio);
+    if (sfd == -1){//Si le port série ne s'ouvre pas
+   	 cout << "Error no is : " << errno << endl;
+   	 cout << "Error description is : " << strerror(errno) << endl;//Donne la description de l'erreur
+   	 return(-1);
+    }
+    else{//S'il n'y a pas d'erreur
+
+   	 cout << "Port serie ouvert en lecture.\n";//Message pour etre sur que le port soit ouvert
+
+   	 for (int i = 0; i < 150; i++){//Tourne 150 fois
+   		 res = read(sfd,buf,125);
+   		 string chaineDeCarac(buf);
+   		 buf[res]=0;
+
+   		 if (chaineDeCarac.find("Temp[0]") != string::npos){// cherche le caracter voulue puis temperature prend la valeur
+   			 temperature = chaineDeCarac.substr(10, chaineDeCarac.find(" d"));
+   			 temperature = temperature.substr(0,temperature.find(" "));
+   			 cout << temperature << endl;
+   		 }
+   		 if(chaineDeCarac.find("Hum[0]") != string::npos){// cherche le caracter voulue puis hulidite prend la valeur
+   			 humidity = chaineDeCarac.substr(8, chaineDeCarac.find(" %"));
+   			 humidity = humidity.substr(0,humidity.find(" "));
+   			 cout << humidity << endl;
+   		 }
+   		 if(chaineDeCarac.find("Press[1]") != string::npos){// cherche le caracter voulue puis pression prend la valeur
+   			 pression = chaineDeCarac.substr(10, chaineDeCarac.find(" h"));
+   			 pression = pression.substr(0,pression.find(" "));
+   			 cout << pression << endl;
+   		 }
+   	 }
+
+   	 cout << endl;
+   	 requeteMySQL += pression +="','";
+   	 requeteMySQL += temperature += "','";
+   	 requeteMySQL += humidity += "');";//requete complete
+   	 char requete[requeteMySQL.size()];
+   	 strcpy(requete, requeteMySQL.c_str());
+    }
+
+    close(sfd);
+
+    MYSQL * conn;
+
+    if ((conn = mysql_init (NULL)) == NULL){
+   	 cout << stderr << "Could not init DB\n";
+   	 return EXIT_FAILURE;
+    }
+
+    if (mysql_real_connect (conn, "localhost", "bts", "snir", "TPNucleoMesures", 0, NULL, 0) == NULL){//connexion a la base de donnee
+   	 cout << stderr << "DB Connection Error\n";
+   	 return EXIT_FAILURE;
+    }
+
+    if (mysql_query(conn, requete) != 0){//execution de la requete si differ de 0
+   	 cout << stderr << "Query Failure\n";
+   	 return EXIT_FAILURE;
+    }
+
+
+    mysql_close(conn);
+    return EXIT_SUCCESS;
 }
